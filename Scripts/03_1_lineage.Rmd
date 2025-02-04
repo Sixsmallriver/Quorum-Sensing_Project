@@ -1,0 +1,327 @@
+---
+title: "LineageAnalysis"
+author: "XiaoheLIU"
+date: "2024-10-22"
+output: html_document
+params:
+  file: NULL
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(dplyr)
+library(ggplot2)
+library(ggtree)
+library(ggpubr)
+library(rstatix)
+library(ppcor)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+### set cid, dids, sid
+
+```{r ids}
+# create a cid for each cell
+set_cid <- function(id, daugthers){
+  cdivs <- 0
+  divs <- rep(0, length(daugthers))
+  for (i in 1:length(daugthers)) {
+    if (!is.na(daugthers[i])){
+      cdivs = cdivs + 1
+    }
+    divs[i] <- cdivs
+  }
+  
+  return(paste(id, divs, sep = '_'))
+}
+```
+
+```{r dids}
+# Set the daughter id for the first daughter cell
+set_did1 <- function(id, daugthers){
+  did <- NA
+  divs <- rep(NA, length(daugthers))
+  for (i in length(daugthers):1) {
+    
+    divs[i] <- did
+    
+    if (!is.na(daugthers[i])){
+      if (is.na(did)){
+        did <- sum(!is.na(daugthers))
+      } else {
+        did <- did - 1
+      }
+    }
+  }
+  return(ifelse(is.na(divs), NA,paste(id, divs, sep = '_')))
+}
+
+# Set the daughter id for the second daughter cells
+set_did2 <- function(id, daugthers){
+  did <- NA
+  dids <- rep(NA, length(daugthers))
+  for (i in length(daugthers):1) {
+    
+    dids[i] <- did
+    
+    if (!is.na(daugthers[i])){
+      did = daugthers[i]
+    }
+  }
+  
+  return(ifelse(is.na(dids), NA,paste(dids, 0, sep = '_')))
+}
+```
+
+```{r}
+data <- read.csv(params$file, sep = ',')
+
+# data <- read.csv('../Distance_Results/LasB_with_delta_results_clustered_cleaned_2_distance.csv', sep = ',')
+data.1 <- data %>% group_by(cluster, id) %>% mutate(cid = set_cid(id, daughters),
+                                             did2 = set_did2(id, daughters), 
+                                             did1 = set_did1(id, daughters)
+                                           )
+```
+
+```{r sid}
+# Set the sister id
+set_sid <- function(cid, did1, did2) {
+  sids <- rep(NA, length(cid))
+
+  # iterate every cid tp assign for sister id
+  for (i in 1:length(cid)) {
+    # check if cid is in did1
+    idx1 <- which(did1 == cid[i])
+    if (length(idx1) >= 1 && !is.na(did2[idx1[1]])) {  
+      sids[i] <- did2[idx1[1]]  
+    }
+    
+    # chec if cid is in the did2
+    idx2 <- which(did2 == cid[i])
+    if (length(idx2) >= 1 && !is.na(did1[idx2[1]])) {  
+      sids[i] <- did1[idx2[1]]  
+    }
+  }
+  
+  return(sids)
+}
+```
+
+```{r}
+data.2 <- data.1 %>% group_by(cluster) %>% mutate(sid = set_sid(cid, did1, did2))
+```
+
+### calculate for lineage for each cell
+
+```{r linage}
+# Get all cell ids belonging to the same lineage
+get_lin <- function(cid, df) {
+  
+  if (is.na(cid)) {
+    return(NA)
+  }
+  
+  did1 <- df[which(df$cid==cid), 'did1']$did1
+  did2 <- df[which(df$cid==cid), 'did2']$did2
+  
+  # check if did1 and did2 are successfully taken
+  if (length(did1) == 0 | length(did2) == 0) {
+    print(paste("Error: cid =", cid, "did1 =", did1, "did2 =", did2))
+    return(NA)
+  }
+  
+  if (length(did1) > 1 || length(did2) > 1) {
+    stop(paste("Error: Multiple values found for cid =", cid))
+  }
+  
+  no.did <- is.na(did1) & is.na(did2)
+  
+  if (no.did){
+    return(cid)
+  } else {
+    return(c(cid, get_lin(did1, df), get_lin(did2, df)))
+  }
+}
+
+```
+
+
+```{r}
+# Initialize an empty data frame to accumulate the results
+final_data <- data.frame()
+
+# Loop through each unique series
+for (i in unique(data.2$series)) {
+  
+  # Filter the data for the current series
+  data.subset <- data.2 %>% filter(series == i)
+
+  # Calculate the mean, first frame, and lifespan for each cell
+  data.mean <- data.subset %>% group_by(cid, did1, did2) %>% 
+    summarise(cell.mean = mean(fluo2), 
+              first.frame = min(frames), 
+              lifespan = length(frames),
+              .groups = 'drop') 
+
+  # Get all cid present in the first frame to define the lineages growing from them
+  root_cids <- data.mean %>% filter(first.frame == 0) %>% dplyr::select(cid) %>% pull()
+
+  # Initialize the lineage column in data.mean
+  data.mean$lineage <- NA
+  
+  # # Assign lineages
+  # for (lid in root_cids) {
+  #   lin_ids <- get_lin(lid, data.mean)
+  #   data.mean[which(data.mean$cid %in% lin_ids), "lineage"] <- lid
+  # }
+  
+  # Assign lineages
+  for (lid in root_cids) {
+    tryCatch({
+      lin_ids <- get_lin(lid, data.mean)
+      data.mean[which(data.mean$cid %in% lin_ids), "lineage"] <- lid
+    }, error = function(e) {
+      # 捕获错误并打印信息
+      print(paste("Error with get_lin for cid =", lid, ", series =", i))
+      print(e) # 打印错误信息
+    })
+  }
+
+  
+  # Join the lineage information back into the subset of the original data
+  updated_subset <- data.subset %>% left_join(data.mean %>% dplyr::select(cid, lineage), by = 'cid')
+  
+  # Append the updated subset to the final_data
+  final_data <- bind_rows(final_data, updated_subset)
+}
+```
+
+to summerise the dataframe for per cell
+
+```{r}
+data.m <- final_data %>% group_by(series, cluster, cid) %>% summarise(
+  cell.length = mean(length),
+  cell.aspect_ratio = mean(length/width),
+  cell.lifespan = length(frames), 
+  first.frame = min(frames), 
+  lineage = first(lineage),
+  gfp.mean = mean(fluo2),
+  gfp.peak = max(fluo2),
+  mcherry.mean = mean(fluo1),
+  mcherry.peak = max(fluo1),
+  ngfp.mean = mean(fluo2/fluo1),
+  x.mean = mean(x),
+  y.mean = mean(y),
+  Autoinducer = first(Autoinducer),
+  gene = first(gene),
+  sid = first(sid),
+  dist = mean(dist.to.edge),
+  #dist = if ("dist_to_edge" %in% colnames(final_data)) mean(dist_to_edge) else NA_real_,
+  cluster = first(cluster),
+  series =first(series)
+  )
+# print(data.m)
+```
+
+### set the closet neighor but not sister cell id
+
+```{r}
+# Set the closet neighbor id
+# Find the closest neigbour of a cell that is not the sister cell
+# and did divide around the same time  (+-1 frame) as the focal cell
+getNID <- function(sid, cid,  ddf){
+  
+  focal <- ddf[which(ddf$cid==cid),]
+  
+  subs1 <- ddf[which(ddf$cid != cid),]
+  subs2 <- subs1[which(subs1$cid != as.character(sid)), ]
+  subs2 <- subs2[which(abs(subs2$first.frame-focal$first.frame)<=1),]
+  if (dim(subs2)[1]>0){
+    dists <- sqrt((subs2$x.mean - focal$x.mean)^2 + (subs2$y.mean - focal$y.mean)^2)
+    nei <- subs2[which.min(dists),]
+    cmin <- dists[which.min(dists)]
+    if (cmin > 100){
+      return(NA)
+    }
+    if (!all(is.na(nei))){
+      return(as.character(nei$cid))
+    } else {
+      return(NA)
+    }
+  } else {
+    return(NA)
+  }
+}
+```
+
+```{r}
+# Get closest neighbour of a cell over it's lifespan
+data.neighnor <- data.m %>% dplyr::group_by(cluster, cid) %>%
+  mutate(ncid = ifelse(!is.na(sid), getNID(sid, cid, data.m[which(data.m$cluster==cluster),]), NA))
+```
+
+### set a random cell id in the colony
+
+```{r}
+getRID <- function(sid, cid, ncid, ddf){
+  
+  focal <- ddf[which(ddf$cid==cid),]
+  
+  subs1 <- ddf[which(ddf$cid != cid),]
+  subs2 <- subs1[which(subs1$cid != as.character(sid)), ]
+  subs3 <- subs2[which(subs2$cid != as.character(ncid)),]
+  subs3 <- subs3[which(abs(subs3$first.frame-focal$first.frame)<=1),]
+  if (dim(subs3)[1]>0){
+    rcid <- subs3$cid[sample(1:nrow(subs3), 1)]
+    return(rcid)
+  } else {
+    return(NA)
+  }
+}
+```
+
+```{r}
+# Get random cell id within the colony
+data.random <- data.neighnor %>% dplyr::group_by(cluster, cid) %>%
+  mutate(rcid = ifelse(!is.na(sid) & !is.na(ncid), getRID(sid, cid, ncid, data.neighnor[which(data.neighnor$cluster==cluster),]), NA))
+```
+
+```{r}
+# data.final <- data.random %>% filter(!is.na(lineage) & !is.na(sid) & !is.na(ncid) & !is.na(rcid))
+# write.csv(data.random, 'lineage_result_lasI_with.csv')
+
+# 设置输出目录
+output_dir <- "../Lineage_Results/"
+
+# 获取文件的 basename（去除路径）
+file_base <- tools::file_path_sans_ext(basename(params$file))
+
+# 拼接完整输出路径
+output_path <- file.path(output_dir, paste0(file_base, "_lineage.csv"))
+
+# 确保目标目录存在，如果不存在则创建
+if (!dir.exists(output_dir)) {
+  dir.create(output_dir, recursive = TRUE)
+}
+
+# 保存文件
+write.csv(data.random, output_path)
+
+# # 输出路径（可选）
+# print(output_path)
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+# plot(pressure)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
