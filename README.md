@@ -1,7 +1,7 @@
 # Quorum-Sensing_Project
 
 ## Description
-This project aims to disentangle the spatial patterns of Quorum Sensing System in *Pseudomonas aeruginosa* by using high resolution fluorescent microscopy with microcolonies grow on agarose patches.
+This project aims to disentangle the spatial patterns of Quorum Sensing System in *Pseudomonas aeruginosa* by using high resolution fluorescent microscopy with microcolonies grow on agarose patches. You can find the detailed proposal in Files/1st_Project_Proposal.
 
 ## Quorum Sensing System in *Pseudomonas aeruginosa*
 *P. aeruginosa* is a Gram-negative, opportunistic human pathogen with a highly intricate QS regulatory network as shown in (This is modified from  [Miranda et al.](https://link.springer.com/chapter/10.1007/978-3-031-08491-1_4)). ![Figure Below](Files/QS-scheme.png)It employs three QS systems: las, rhl, and pqs. The las and rhl systems both use acyl-homoserine lactones as the backbone for their autoinducers and operate through a cascade involving three key genes: the signal synthase gene, receptor gene, and product genes. The pqs system, in contrast, utilizes quinolones as autoinducers and features a more complex gene cascade. Together, these systems regulate the expression of hundreds of genes in response to increasing cell density, orchestrating processes ranging from virulence factor production to biofilm formation.
